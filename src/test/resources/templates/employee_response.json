@@ -1,0 +1,12 @@
+{
+  "employeeId": "1",
+  "name": {
+    "firstName": "alpha",
+    "lastName": "Beta"
+  },
+  "address": {
+    "postalCode": "75038",
+    "streetName": "NOIDA",
+    "city": "GT Noida"
+  }
+}

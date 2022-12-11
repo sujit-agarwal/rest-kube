@@ -1,0 +1,7 @@
+
+rest-kube:
+  enabled: false
+rest-server:
+  enabled: false
+zipkin:
+  enabled: false

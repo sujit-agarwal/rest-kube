@@ -1,0 +1,161 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    chart: {{ include "helm.chart" . }}
+    app: {{ include "helm.name" . }}
+    app.kubernetes.io/name: {{ include "helm.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: {{ include "helm.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "helm.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "helm.name" . }}
+      annotations:
+        prometheus.io/scrape: {{ .Values.prometheus.scrape | quote }}
+        prometheus.io/path: {{ .Values.prometheus.endpoint  }}
+        prometheus.io/port: {{ .Values.prometheus.port | quote }}
+        prometheus.io/scheme: {{ .Values.prometheus.scheme | quote }}
+        sidecar.istio.io/inject: {{ .Values.virtualService.proxy.enabled | quote }}
+        co.elastic.logs/enabled: {{ .Values.loganalytics.enabled | quote }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      initContainers:
+        {{- if $.Values.vault.enabled }}
+        - name: vault
+          image: {{ $.Values.vault.image }}
+          imagePullPolicy: {{ $.Values.vault.imagePullPolicy }}
+          volumeMounts: # Shared volume to write secrets
+            - name: vault
+              mountPath: /etc/vault
+          env:
+            - name: VAULT_ADDR
+              value: {{ $.Values.vault.hostUrl | quote }}        # Vault Server Address
+            - name: VAULT_ROLE
+              value: {{ $.Values.vault.role | quote }}           # Associated Vault role
+            - name: VAULT_SECRETS_PATH
+              value: {{ $.Values.vault.secretPath | quote }}     # Associated Vault KV2 path
+            - name: VAULT_SKIP_VERIFY
+              value: {{ $.Values.vault.skipVerify | quote }}
+            - name: VAULT_AUTH_PATH
+              value: {{ $.Values.vault.authPath | quote }}
+        {{- end }}
+        {{- if .Values.appdynamics.enabled }}
+        - name: app-dynamics-agent
+          image: {{ printf "%s/%s:%s" $.Values.appdynamics.registry $.Values.appdynamics.repository  $.Values.appdynamics.tag }}
+          imagePullPolicy: {{ $.Values.appdynamics.imagePullPolicy | quote }}
+          command: ["/bin/sh"]
+          args: ["-c","mkdir -p {{ $.Values.appdynamics.confDir }} && cp -a /AppDynamics/* {{ $.Values.appdynamics.confDir }} && chown -R {{ $.Values.securityContext.runAsUser }}:{{ $.Values.securityContext.runAsGroup }} {{ $.Values.appdynamics.confDir }}"]
+          volumeMounts:
+            - name: "appd-shared-conf"
+              mountPath: {{ $.Values.appdynamics.confDir | quote }}
+        {{- end }}
+      containers:
+        - name: {{ include "helm.name" . }}
+          image: "{{ .Values.deployment.image.name }}:{{ .Values.deployment.image.tag }}"
+          {{- if .Values.securityContext.enabled }}
+          securityContext:
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+            runAsGroup: {{ .Values.securityContext.runAsGroup }}
+            runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.deployment.image.pullPolicy }}
+          {{- if .Values.vault.enabled }}
+          command: [ "/bin/bash","-c" ]
+          args: [ "source /etc/vault/secrets && java $JAVA_OPTS $APPD_AGENT -jar /opt/app/app.jar" ]
+          {{- end }}
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+            {{- if .Values.appdynamics.enabled }}
+            - name: "appd-shared-conf"
+              mountPath: {{ $.Values.appdynamics.confDir | quote }}
+            {{- end }}
+            {{- if .Values.vault.enabled }}
+            - name: vault
+              mountPath: /etc/vault
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+              name: web
+            - containerPort: {{ .Values.prometheus.port }}
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: {{ include "helm.name" . }}
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: {{ .Values.env.spring.activeProfile }}
+            - name: JAVA_OPTS
+              value: {{ .Values.env.javaOpts }}
+            {{- if .Values.appdynamics.enabled }}
+            - name: APPDYNAMICS_AGENT_APPLICATION_NAME
+              value: {{ .Values.appdynamics.appName | quote }}
+            - name:  APPD_AGENT
+              value: {{ printf "%s:%s%s/%s" "-javaagent" $.Values.appdynamics.confDir $.Values.appdynamics.subConfDir "javaagent.jar" }}
+            - name: APPDYNAMICS_AGENT_TIER_NAME
+              value: {{ $.Values.appdynamics.tierName | quote }}
+            - name: APPDYNAMICS_AGENT_NODE_NAME
+              valueFrom:
+                fieldRef:
+                   fieldPath: metadata.name
+            - name: APPDYNAMICS_UNIQUE_ID
+              valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.name
+            - name: APPDYNAMICS_AGENT_ACCOUNT_NAME
+              value: {{ .Values.appdynamics.account | quote}}
+            - name: APPDYNAMICS_CONTROLLER_HOST_NAME
+              value: {{ .Values.appdynamics.host | quote}}
+            - name: APPDYNAMICS_CONTROLLER_PORT
+              value: {{ .Values.appdynamics.port | quote}}
+            - name: APPDYNAMICS_CONTROLLER_SSL_ENABLED
+              value: {{ .Values.appdynamics.ssl | quote}}
+            - name: APPDYNAMICS_AGENT_ACCOUNT_ACCESS_KEY
+              value: {{ .Values.appdynamics.accessKey | quote }}
+            {{- end }}
+          livenessProbe:
+            initialDelaySeconds: {{ .Values.deployment.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.deployment.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.deployment.livenessProbe.failureThreshold }}
+            successThreshold: {{ .Values.deployment.livenessProbe.successThreshold }}
+            timeoutSeconds: {{ .Values.deployment.livenessProbe.timeoutSeconds }}
+            httpGet:
+              path: {{ .Values.deployment.livenessProbe.endpoint }}
+              port: {{ .Values.deployment.livenessProbe.port}}
+          readinessProbe:
+            initialDelaySeconds: {{ .Values.deployment.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.deployment.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.deployment.readinessProbe.failureThreshold }}
+            successThreshold: {{ .Values.deployment.readinessProbe.successThreshold }}
+            timeoutSeconds: {{ .Values.deployment.readinessProbe.timeoutSeconds }}
+            httpGet:
+              path: {{ .Values.deployment.readinessProbe.endpoint }}
+              port: {{ .Values.deployment.readinessProbe.port }}
+          {{- if .Values.deployment.preStop }}
+          lifecycle:
+            preStop:
+              httpGet:
+                path: {{ .Values.deployment.preStop.path }}
+                port: {{ .Values.deployment.preStop.port }}
+          {{- end }}
+          resources:
+{{ toYaml .Values.deployment.resources | indent 12 }}
+      volumes:
+        - name: "tmp-volume"
+          emptyDir: {}
+        {{- if .Values.appdynamics.enabled }}
+        - name: "appd-shared-conf"
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.vault.enabled }}
+        - name: vault
+          emptyDir:
+            medium: Memory
+  {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.deployment.terminationGracePeriodSeconds }}

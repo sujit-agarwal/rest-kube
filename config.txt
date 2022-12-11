@@ -1,0 +1,4 @@
+docker run -i -t rest-kube:latest /bin/bash
+
+docker save agent > agent.tar
+microk8s ctr image import agent.tar
