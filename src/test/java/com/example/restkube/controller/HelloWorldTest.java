@@ -56,7 +56,6 @@ class HelloWorldTest {
 
         assertThat(body).asList();
 
-        body.stream().flatMap()
         verify(exactly(1), getRequestedFor(urlPathMatching(Endpoint.SINGLE.resource())));
 
 
