@@ -47,10 +47,6 @@ public class HelloServiceImpl implements HelloService {
     }
 
 
-
-
-
-
     @Override
     public CompletableFuture<Name> name() {
         CompletableFuture<Name> nameCompletableFuture = helloServiceClient.single().thenCompose(response -> helloServiceClient.getName(response));
